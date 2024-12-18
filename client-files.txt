@@ -1,0 +1,879 @@
+src/components/AddPost.js:
+import React, { useState } from 'react';
+import { Modal, Button, Form } from 'react-bootstrap';
+
+const AddPost = ({ showModal, handleClose, onPostAdded }) => {
+    const [title, setTitle] = useState('');
+    const [content, setContent] = useState('');
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        try {
+            const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/posts`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('token')}` // Use 'token' key to get the token
+                },
+                body: JSON.stringify({ title, content }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to create post');
+            }
+
+            const newPost = await response.json();
+            onPostAdded(newPost); // Callback to notify parent of new post
+            setTitle(''); // Clear title input
+            setContent(''); // Clear content input
+            handleClose(); // Close the modal after submission
+        } catch (error) {
+            console.error("Error creating post:", error);
+        }
+    };
+
+    return (
+        <Modal show={showModal} onHide={handleClose}>
+            <Modal.Header closeButton>
+                <Modal.Title>Create New Post</Modal.Title>
+            </Modal.Header>
+            <Modal.Body>
+                <Form onSubmit={handleSubmit}>
+                    <Form.Group controlId="formBasicTitle">
+                        <Form.Label>Title</Form.Label>
+                        <Form.Control 
+                            type="text" 
+                            value={title} 
+                            onChange={(e) => setTitle(e.target.value)} 
+                            required 
+                        />
+                    </Form.Group>
+                    <Form.Group controlId="formBasicContent">
+                        <Form.Label>Content</Form.Label>
+                        <Form.Control 
+                            as="textarea" 
+                            rows={3} 
+                            value={content} 
+                            onChange={(e) => setContent(e.target.value)} 
+                            required 
+                        />
+                    </Form.Group>
+                    <Button variant="primary" type="submit">
+                        Submit
+                    </Button>
+                </Form>
+            </Modal.Body>
+        </Modal>
+    );
+};
+
+export default AddPost;
+
+src/components/Comment.js:
+import React from 'react';
+
+const Comment = ({ comment }) => {
+    return (
+        <div className="comment">
+            <p>
+                <strong>{comment.authorId ? comment.authorId.username : 'Unknown User'}</strong>: {comment.content}
+            </p>
+        </div>
+    );
+};
+
+export default Comment;
+
+src/components/CommentForm.js:
+import React, { useState } from 'react';
+
+const CommentForm = ({ postId, onCommentAdded }) => {
+    const [content, setContent] = useState('');
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        try {
+            const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/posts/${postId}/comments`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('token')}` // Use 'token' key to get the token
+                },
+                body: JSON.stringify({ content }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to add comment');
+            }
+
+            const newComment = await response.json();
+            onCommentAdded(newComment); // Callback to notify parent of new comment
+            setContent(''); // Clear the input field
+        } catch (error) {
+            console.error("Error adding comment:", error);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSubmit}>
+            <div className="form-group">
+                <label>Add a Comment</label>
+                <textarea
+                    className="form-control"
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    required
+                />
+            </div>
+            <button type="submit" className="btn btn-primary mt-2">Submit Comment</button>
+        </form>
+    );
+};
+
+export default CommentForm;
+
+src/components/Comments.js:
+import React from 'react';
+import Comment from './Comment';
+
+const Comments = ({ comments }) => {
+    return (
+        <div className="comments-section">
+            {comments.map(comment => (
+                <Comment key={comment._id} comment={comment} />
+            ))}
+        </div>
+    );
+};
+
+export default Comments;
+
+src/components/DeletePost.js:
+import React, { useContext } from 'react';
+import { Notyf } from 'notyf'; 
+import 'notyf/notyf.min.css'; 
+import UserContext from '../context/UserContext'; // Import UserContext
+
+const DeletePost = ({ postId, onDeleteSuccess }) => {
+    const notyf = new Notyf(); // Initialize Notyf for notifications
+    const { user } = useContext(UserContext); // Access user context
+
+    const handleDelete = async () => {
+        try {
+            const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/posts/${postId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${localStorage.getItem('token')}` // Use 'token' key to get the token
+                },
+            });
+
+            if (!response.ok) throw new Error('Failed to delete post');
+            notyf.success('Post deleted successfully!'); // Show success notification
+            
+            onDeleteSuccess(); // Callback to notify parent of successful deletion
+        } catch (error) {
+            console.error("Error deleting post:", error);
+            notyf.error(error.message); // Show error notification
+        }
+    };
+
+    return (
+        <button type="button" className="btn btn-danger" onClick={handleDelete}>
+            Delete Post
+        </button>
+    );
+};
+
+export default DeletePost;
+
+src/components/EditPost.js:
+import React, { useEffect, useState, useContext } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { Notyf } from 'notyf'; 
+import 'notyf/notyf.min.css'; 
+import UserContext from '../context/UserContext'; // Import UserContext
+import DeletePost from '../components/DeletePost'; // Import DeletePost component
+
+const EditPost = () => {
+    const { id } = useParams(); // Get post ID from URL
+    const [post, setPost] = useState(null);
+    const [title, setTitle] = useState('');
+    const [content, setContent] = useState('');
+    const notyf = new Notyf(); // Initialize Notyf for notifications
+    const navigate = useNavigate();
+    const { user } = useContext(UserContext); // Access user context
+
+    useEffect(() => {
+        const fetchPost = async () => {
+            try {
+                const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/posts/${id}`);
+                if (!response.ok) throw new Error('Post not found');
+                const postData = await response.json();
+                setPost(postData);
+                setTitle(postData.title);
+                setContent(postData.content);
+            } catch (error) {
+                console.error("Error fetching post:", error);
+                notyf.error(error.message); // Show error notification
+            }
+        };
+
+        fetchPost();
+    }, [id]);
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        try {
+            const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/posts/${id}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('token')}` // Include token if available
+                },
+                body: JSON.stringify({ title, content }),
+            });
+
+            if (!response.ok) throw new Error('Failed to update post');
+            const updatedPost = await response.json();
+            notyf.success('Post updated successfully!'); // Show success notification
+            navigate(`/posts/${updatedPost._id}`); // Redirect to the updated post detail page
+        } catch (error) {
+            console.error("Error updating post:", error);
+            notyf.error(error.message); // Show error notification
+        }
+    };
+
+    if (!post) return <p>Loading...</p>; // Loading state
+
+    return (
+        <div className="container mt-4">
+            <h2>Edit Post</h2>
+            <form onSubmit={handleSubmit}>
+                <div className="form-group">
+                    <label>Title</label>
+                    <input 
+                        type="text" 
+                        className="form-control" 
+                        value={title} 
+                        onChange={(e) => setTitle(e.target.value)} 
+                        required 
+                    />
+                </div>
+                <div className="form-group">
+                    <label>Content</label>
+                    <textarea 
+                        className="form-control" 
+                        value={content} 
+                        onChange={(e) => setContent(e.target.value)} 
+                        required 
+                    />
+                </div>
+                <button type="submit" className="btn btn-primary">Update Post</button>
+
+                {(post.authorId.toString() === user?.id || user?.isAdmin) && (
+                    <DeletePost postId={post._id} onDeleteSuccess={() => navigate('/')} />
+                )}
+            </form>
+        </div>
+    );
+};
+
+export default EditPost;
+
+src/components/ErrorHandler.js:
+import React from 'react';
+
+class ErrorHandler extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { hasError: false };
+    }
+
+    static getDerivedStateFromError(error) {
+        // Update state so the next render will show the fallback UI
+        return { hasError: true };
+    }
+
+    componentDidCatch(error, errorInfo) {
+        // Log the error to an error reporting service
+        console.error("Error caught in ErrorHandler:", error, errorInfo);
+    }
+
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div style={{ textAlign: 'center', marginTop: '50px' }}>
+                    <h1>Something went wrong.</h1>
+                    <p>Please try refreshing the page or come back later.</p>
+                </div>
+            );
+        }
+
+        return this.props.children; 
+    }
+}
+
+export default ErrorHandler;
+
+src/components/Navbar.js:
+import React, { useContext } from 'react';
+import UserContext from '../context/UserContext'; // Import UserContext
+
+const Navbar = () => {
+    const { user } = useContext(UserContext); // Accessing user context
+
+    return (
+        <nav className="navbar navbar-expand-lg navbar-light bg-light">
+            <a className="navbar-brand" href="/">Blog App</a>
+            <button 
+                className="navbar-toggler" 
+                type="button" 
+                data-bs-toggle="collapse" 
+                data-bs-target="#navbarNav" 
+                aria-controls="navbarNav" 
+                aria-expanded="false" 
+                aria-label="Toggle navigation"
+            >
+                <span className="navbar-toggler-icon"></span>
+            </button>
+            <div className="collapse navbar-collapse" id="navbarNav">
+                <ul className="navbar-nav ms-auto">
+                    <li className="nav-item">
+                        <a className="nav-link" href="/">Home</a>
+                    </li>
+                    {user ? ( // If user is logged in
+                        <>
+                            <li className="nav-item">
+                                <a className="nav-link" href="/logout">Logout</a>
+                            </li>
+                        </>
+                    ) : ( // If no user is logged in, show login/register links
+                        <>
+                            <li className="nav-item">
+                                <a className="nav-link" href="/login">Login</a>
+                            </li>
+                            <li className="nav-item">
+                                <a className="nav-link" href="/register">Register</a>
+                            </li>
+                        </>
+                    )}
+                </ul>
+            </div>
+        </nav>
+    );
+};
+
+export default Navbar;
+
+src/components/Post.js:
+// src/components/Post.js
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+
+const Post = ({ post }) => {
+    const [isExpanded, setIsExpanded] = useState(false); // State to track if content is expanded
+
+    const toggleContent = () => {
+        setIsExpanded(!isExpanded); // Toggle the expanded state
+    };
+
+    return (
+        <div className="card mb-3">
+            <div className="card-body">
+                <h5 className="card-title">{post.title}</h5>
+                {/* Show truncated content or full content based on state */}
+                <p className="card-text">
+                    {isExpanded ? post.content : `${post.content.substring(0, 100)}...`}
+                </p>
+                {/* Display author and date */}
+                <p className="card-text">
+                    <small className="text-muted">
+                        By {post.authorId.username} on {new Date(post.createdAt).toLocaleDateString()}
+                    </small>
+                </p>
+                <Link to={`/posts/${post._id}`} className="btn btn-primary">View Full Post</Link>
+                {/* Add Edit button */}
+                <Link to={`/edit/${post._id}`} className="btn btn-secondary ml-2">Edit</Link>
+            </div>
+        </div>
+    );
+};
+
+export default Post;
+
+src/components/PostForm.js:
+import React, { useState } from 'react';
+
+const PostForm = ({ onSubmit, showModal, handleClose }) => {
+    const [title, setTitle] = useState('');
+    const [content, setContent] = useState('');
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        try {
+            const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/posts`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('token')}` // Use 'token' key to get the token
+                },
+                body: JSON.stringify({ title, content }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to create post');
+            }
+
+            const newPost = await response.json();
+            onSubmit(newPost); // Callback to notify parent of new post
+            setTitle('');
+            setContent('');
+            handleClose(); // Close the modal after submission
+        } catch (error) {
+            console.error("Error creating post:", error);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSubmit}>
+            <div className="form-group">
+                <label>Title</label>
+                <input
+                    type="text"
+                    className="form-control"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    required
+                />
+            </div>
+            <div className="form-group">
+                <label>Content</label>
+                <textarea
+                    className="form-control"
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    required
+                />
+            </div>
+            <button type="submit" className="btn btn-primary mt-2">Submit</button>
+        </form>
+    );
+};
+
+export default PostForm;
+
+src/context/UserContext.js:
+import React from 'react';
+
+const UserContext = React.createContext();
+
+export const UserProvider = UserContext.Provider;
+export default UserContext;
+
+src/pages/Home.js:
+import React, { useEffect, useState } from 'react';
+import Post from '../components/Post';
+import AddPost from '../components/AddPost';
+import { Button } from 'react-bootstrap'; // Import Bootstrap button
+
+const Home = () => {
+    const [posts, setPosts] = useState([]);
+    const [error, setError] = useState(null); // State to hold any errors
+    const [showAddPost, setShowAddPost] = useState(false); // State to control visibility of AddPost
+
+    useEffect(() => {
+        const fetchPosts = async () => {
+            try {
+                const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/posts`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                setPosts(data);
+            } catch (error) {
+                console.error("Error fetching posts:", error);
+                setError(error.message); // Set error message in state
+            }
+        };
+        
+        fetchPosts();
+    }, []);
+
+    // Function to handle new post submission
+    const handleNewPost = (newPost) => {
+        setPosts((prevPosts) => [...prevPosts, newPost]); // Add the new post to the state
+    };
+
+    return (
+        <div className="container mt-4">
+            <h1>Blog Posts</h1>
+            {error && <p className="text-danger">{error}</p>} {/* Display error message */}
+            
+            {/* Button to toggle Add Post visibility */}
+            <Button 
+                variant="success" 
+                className="mb-3" 
+                onClick={() => setShowAddPost(true)}
+            >
+                Add Post
+            </Button>
+
+            {/* Render Add Post as a modal */}
+            <AddPost 
+                showModal={showAddPost} 
+                handleClose={() => setShowAddPost(false)} 
+                onPostAdded={handleNewPost} 
+            />
+
+            {posts.length === 0 ? (
+                <p>No posts available.</p>
+            ) : (
+                posts.map(post => (
+                    <Post key={post._id} post={post} />
+                ))
+            )}
+        </div>
+    );
+};
+
+export default Home;
+
+src/pages/Login.js:
+import React, { useState, useContext } from 'react';
+import { Container, Form, Button } from 'react-bootstrap'; 
+import UserContext from '../context/UserContext'; 
+import { Notyf } from 'notyf'; 
+import 'notyf/notyf.min.css'; 
+import { useNavigate } from 'react-router-dom'; // Import useNavigate
+
+const Login = () => {
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const { setUser } = useContext(UserContext); // Access setUser from context
+    const notyf = new Notyf(); // Initialize Notyf for notifications
+    const navigate = useNavigate(); // Initialize navigate
+
+    const handleLogin = async (e) => {
+        e.preventDefault();
+        try {
+            const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/users/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password }),
+            });
+
+            const data = await response.json();
+            console.log('Login Response:', data); 
+
+            if (response.ok) {
+                localStorage.setItem('token', data.token); // Store only the token
+                console.log('Token stored:', data.token);
+                setUser({ token: data.token, email }); // Set user context with email and token
+                notyf.success('Login successful!'); // Show success notification
+                
+                navigate('/'); // Redirect to home page after successful login
+            } else {
+                const errorMessage = data.message || 'Login failed'; 
+                console.error('Login failed:', errorMessage);
+                notyf.error(errorMessage); // Show error notification
+            }
+        } catch (error) {
+            console.error('Error during login:', error);
+            notyf.error('An error occurred while logging in.'); // Show general error notification
+        }
+    };
+
+    return (
+        <Container className="mt-5">
+            <h2 className="text-center mb-4">Login</h2>
+            <Form onSubmit={handleLogin}>
+                <Form.Group controlId="formBasicEmail">
+                    <Form.Label>Email address</Form.Label>
+                    <Form.Control 
+                        type="email" 
+                        placeholder="Enter email" 
+                        value={email} 
+                        onChange={(e) => setEmail(e.target.value)} 
+                        required 
+                    />
+                </Form.Group>
+
+                <Form.Group controlId="formBasicPassword">
+                    <Form.Label>Password</Form.Label>
+                    <Form.Control 
+                        type="password" 
+                        placeholder="Password" 
+                        value={password} 
+                        onChange={(e) => setPassword(e.target.value)} 
+                        required 
+                    />
+                </Form.Group>
+
+                <Button variant="primary" type="submit" className="w-100 mt-3">
+                    Login
+                </Button>
+            </Form>
+        </Container>
+    );
+};
+
+export default Login;
+
+src/pages/Logout.js:
+import React, { useContext, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom'; 
+import UserContext from '../context/UserContext';
+
+const Logout = () => {
+    const { setUser } = useContext(UserContext); // Access setUser from context
+    const navigate = useNavigate(); 
+
+    useEffect(() => {
+        const handleLogout = () => {
+            setUser(null); // Clear user state
+            localStorage.removeItem('token'); // Remove user data from local storage
+            navigate('/login'); // Redirect to login after logout
+        };
+
+        handleLogout(); // Call logout function on component mount
+    }, [setUser, navigate]);
+
+    return (
+        <div className="container mt-4">
+            <h2>Logging out...</h2>
+        </div>
+    );
+};
+
+export default Logout;
+
+src/pages/PostDetail.js:
+import React, { useEffect, useState, useContext } from 'react';
+import Comments from '../components/Comments';
+import CommentForm from '../components/CommentForm'; // Import CommentForm
+import { useNavigate, useParams } from 'react-router-dom';
+import UserContext from '../context/UserContext'; // Import UserContext
+
+const PostDetail = () => {
+    const { id } = useParams(); // Get post ID from URL
+    const [post, setPost] = useState(null);
+    const [comments, setComments] = useState([]);
+    const [error, setError] = useState(null);
+    const { user } = useContext(UserContext); // Access user context
+    const navigate = useNavigate();
+
+    useEffect(() => {
+        const fetchPostAndComments = async () => {
+            try {
+                // Fetch the post details
+                const postResponse = await fetch(`${process.env.REACT_APP_API_BASE_URL}/posts/${id}`);
+                if (!postResponse.ok) throw new Error('Post not found');
+                const postData = await postResponse.json();
+                setPost(postData);
+
+                // Fetch comments for the post
+                const commentsResponse = await fetch(`${process.env.REACT_APP_API_BASE_URL}/posts/${id}/comments`);
+                if (!commentsResponse.ok) throw new Error('Comments not found');
+                const commentsData = await commentsResponse.json();
+                setComments(commentsData);
+                
+            } catch (error) {
+                console.error("Error fetching post or comments:", error);
+                setError(error.message); // Set error message to display
+            }
+        };
+
+        fetchPostAndComments();
+    }, [id]); // Use id directly from useParams
+
+    const handleCommentAdded = (newComment) => {
+        setComments((prevComments) => [...prevComments, newComment]); // Add new comment to state
+    };
+
+    if (error) {
+        return <p className="text-danger">{error}</p>;
+    }
+
+    if (!post) return <p>Loading...</p>; // Optional loading state
+
+    return (
+        <>
+            <h1>{post.title}</h1>
+            <p>{post.content}</p>
+
+            {/* Show Edit button only if the user is the author */}
+            {user && user.id === post.authorId.toString() && (
+                <button 
+                    className="btn btn-secondary" 
+                    onClick={() => navigate(`/edit/${post._id}`)}
+                >
+                    Edit Post
+                </button>
+            )}
+
+            {/* Render Comments */}
+            <Comments comments={comments} />
+            
+            {/* Comment Form */}
+            <CommentForm postId={post._id} onCommentAdded={handleCommentAdded} />
+        </>
+    );
+};
+
+export default PostDetail;
+
+src/pages/Register.js:
+import React, { useState, useContext } from 'react';
+import { Container, Form, Button } from 'react-bootstrap'; 
+import UserContext from '../context/UserContext'; 
+import { Notyf } from 'notyf'; 
+import 'notyf/notyf.min.css'; 
+import { useNavigate } from 'react-router-dom'; // Import useNavigate
+
+const Register = () => {
+    const [username, setUsername] = useState('');
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const { setUser } = useContext(UserContext); // Access setUser from context
+    const navigate = useNavigate(); // Initialize navigate
+
+    const handleRegister = async (e) => {
+        e.preventDefault();
+        try {
+            const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/users/register`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ username, email, password }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Registration failed');
+            }
+
+            const data = await response.json();
+            console.log(data.message); // Handle success message
+            
+            navigate('/login'); // Redirect to login page after successful registration
+        } catch (error) {
+            console.error('Error during registration:', error);
+        }
+    };
+
+    return (
+        <Container className="mt-5">
+            <h2 className="text-center mb-4">Register</h2>
+            <Form onSubmit={handleRegister}>
+                <Form.Group controlId="formBasicUsername">
+                    <Form.Label>Username</Form.Label>
+                    <Form.Control 
+                        type="text" 
+                        placeholder="Enter username" 
+                        value={username} 
+                        onChange={(e) => setUsername(e.target.value)} 
+                        required 
+                    />
+                </Form.Group>
+
+                <Form.Group controlId="formBasicEmail">
+                    <Form.Label>Email address</Form.Label>
+                    <Form.Control 
+                        type="email" 
+                        placeholder="Enter email" 
+                        value={email} 
+                        onChange={(e) => setEmail(e.target.value)} 
+                        required 
+                    />
+                </Form.Group>
+
+                <Form.Group controlId="formBasicPassword">
+                    <Form.Label>Password</Form.Label>
+                    <Form.Control 
+                        type="password" 
+                        placeholder="Password" 
+                        value={password} 
+                        onChange={(e) => setPassword(e.target.value)} 
+                        required 
+                    />
+                </Form.Group>
+
+                <Button variant="primary" type="submit" className="w-100 mt-3">
+                    Register
+                </Button>
+            </Form>
+        </Container>
+    );
+};
+
+export default Register;
+
+src/App.js:
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Navbar from './components/Navbar';
+import Home from './pages/Home';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import PostDetail from './pages/PostDetail';
+import Logout from './pages/Logout';
+import EditPost from './components/EditPost'; 
+import ErrorHandler from './components/ErrorHandler';
+
+const App = () => {
+    return (
+        <ErrorHandler>
+            <Router>
+                <Navbar />
+                <Routes>
+                    <Route path="/" element={<Home />} />
+                    <Route path="/login" element={<Login />} />
+                    <Route path="/register" element={<Register />} />
+                    <Route path="/posts/:id" element={<PostDetail />} />
+                    <Route path="/logout" element={<Logout />} />
+                    <Route path="/edit/:id" element={<EditPost />} />
+                </Routes>
+            </Router>
+        </ErrorHandler>
+    );
+};
+
+export default App;
+
+src/index.js:
+import React, { useState } from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import UserContext from './context/UserContext'; // Import UserContext
+import 'bootstrap/dist/css/bootstrap.min.css';
+import 'bootstrap';
+
+const rootElement = document.getElementById('root');
+const root = ReactDOM.createRoot(rootElement);
+
+// Create a custom provider for user context
+const UserProvider = ({ children }) => {
+    const [user, setUser] = useState(null); // Manage user state here
+
+    return (
+        <UserContext.Provider value={{ user, setUser }}>
+            {children}
+        </UserContext.Provider>
+    );
+};
+
+root.render(
+    <React.StrictMode>
+        <UserProvider> {/* Wrap App with UserProvider */}
+            <App />
+        </UserProvider>
+    </React.StrictMode>
+);
+
+src/index.css:
+//empty
+
+.env: 
+REACT_APP_API_BASE_URL=http://localhost:5003/blog-app-API
